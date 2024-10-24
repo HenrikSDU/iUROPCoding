@@ -242,7 +242,7 @@ def benchmark_summary_transformer(results, model=transformer_resnet_50, detectio
                             'BUS_BOXES': [bus_boxes], 
                             'TRUCK_COUNT': [truck_count],
                             'TRUCK_AVG_CONF': [truck_AVG_conf],
-                            'TRUCK_BOXES': [bus_boxes]
+                            'TRUCK_BOXES': [truck_boxes]
                             })
         
        
@@ -554,7 +554,7 @@ def benchmark_summary_mask_rcnn(results, data_source, data_time):
                             'BUS_BOXES': [bus_boxes], 
                             'TRUCK_COUNT': [truck_count],
                             'TRUCK_AVG_CONF': [truck_AVG_conf],
-                            'TRUCK_BOXES': [bus_boxes]
+                            'TRUCK_BOXES': [truck_boxes]
                             })
 
 
