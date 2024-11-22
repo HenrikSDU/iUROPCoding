@@ -10,7 +10,7 @@ from ultralytics import YOLO
 
 from transformers import DetrFeatureExtractor, DetrForObjectDetection
 import torch
-
+import torchvision.ops as ops
 
 #######################################################
 # YOLO
@@ -117,40 +117,62 @@ COLORS = [[0.000, 0.447, 0.741], [0.850, 0.325, 0.098], [0.929, 0.694, 0.125],
           [0.494, 0.184, 0.556], [0.466, 0.674, 0.188], [0.301, 0.745, 0.933]]
 
 
-def detect_object_using_transformer(image, visualize=False, jpeg=False):
 
+def detect_object_using_transformer(image_path, visualize=False, jpeg=False):
+    # Open the image
     if jpeg:
-        image = Image.open(image)
-
+        image = Image.open(image_path)
     start_time = datetime.now()
     # Preprocessing
     inputs = feature_extractor(images=image, return_tensors="pt")
-    
+
     # Inference
     outputs = transformer_resnet_50(**inputs)
 
     # Postprocessing: convert outputs (bounding boxes and class logits) to COCO API
     target_sizes = torch.tensor([image.size[::-1]])
-    
     results = feature_extractor.post_process_object_detection(outputs, target_sizes=target_sizes)[0]
     
-    detection_time = (datetime.now() - start_time).microseconds * 0.001 # Miliseconds
+    detection_time = (datetime.now() - start_time).microseconds * 0.001  # Milliseconds
+    
+    # Extract bounding boxes, scores, and labels
+    boxes = results['boxes'].detach()
+    scores = results['scores'].detach()
+    labels = results['labels'].detach()
+
+    # Perform Non-Maximum Suppression (NMS)
+    iou_threshold = 0.8
+    keep_indices = ops.nms(boxes, scores, iou_threshold).tolist()
+
+    # Filter results based on NMS
+    results['boxes'] = [results['boxes'][i].detach().numpy() for i in keep_indices]
+    results['scores'] = [results['scores'][i].detach().numpy() for i in keep_indices]
+    results['labels'] = [results['labels'][i].detach().numpy() for i in keep_indices]
 
     if visualize:
-        plt.figure(figsize=(16,10))
+        plt.figure(figsize=(16, 10))
         plt.imshow(image)
         ax = plt.gca()
-        colors = COLORS * 100
-        for score, label, (xmin, ymin, xmax, ymax),c  in zip(results['scores'].tolist(), results['labels'].tolist(), results['boxes'].tolist(), colors):
-            ax.add_patch(plt.Rectangle((xmin, ymin), xmax - xmin, ymax - ymin,
-                                    fill=False, color=c, linewidth=3))
-            text = f'{transformer_resnet_50.config.id2label[label]}: {score:0.2f}'
-            ax.text(xmin, ymin, text, fontsize=15,
-                    bbox=dict(facecolor='yellow', alpha=0.5))
+        colors = plt.cm.hsv(torch.linspace(0, 1, len(keep_indices))).tolist()  # Generate a list of colors
+
+        for box, score, label, color in zip(results['boxes'], results['scores'], results['labels'], colors):
+            xmin, ymin, xmax, ymax = box
+            rect = plt.Rectangle((xmin, ymin), xmax - xmin, ymax - ymin, fill=False, color=color, linewidth=3)
+            ax.add_patch(rect)
+            text = f'{transformer_resnet_50.config.id2label[int(label)]}: {score:.2f}'
+            ax.text(xmin, ymin - 10, text, fontsize=15, bbox=dict(facecolor='yellow', alpha=0.5))
+
         plt.axis('off')
         plt.show()
-    
+
     return results, detection_time
+
+
+
+
+
+
+
 
 
 
@@ -201,19 +223,19 @@ def benchmark_summary_transformer(results, model=transformer_resnet_50, detectio
 
             if label == 'car':
                 car_count += 1
-                car_conf_sum += score.detach().numpy()  # Detach and convert to numpy
+                car_conf_sum += score
                 car_boxes.append(box)
             elif label == 'truck':
                 truck_count += 1
-                truck_conf_sum += score.detach().numpy()  # Detach and convert to numpy
+                truck_conf_sum += score
                 truck_boxes.append(box)
             elif label == 'bus':
                 bus_count += 1
-                bus_conf_sum += score.detach().numpy()  # Detach and convert to numpy
+                bus_conf_sum += score
                 bus_boxes.append(box)
             elif label == 'motorcycle':
                 motor_cycle_count += 1
-                motor_cycle_conf_sum += score.detach().numpy()  # Detach and convert to numpy
+                motor_cycle_conf_sum += score
                 mc_boxes.append(box)
 
         # Evaluate average confidence for the different classes
@@ -277,56 +299,6 @@ def remove_na_from_lists(*lists):
 #######################################################
 # Mask RCNN
 #######################################################
-import subprocess
-from collections import Counter
-
-
-# Command to clone the repository
-command = ["git", "clone", "https://github.com/tensorflow/tpu/"]
-
-# Execute the command
-result = subprocess.run(command, capture_output=True, text=True)
-
-# Print the output
-print(result.stdout)
-print(result.stderr)
-
-from IPython import display
-from PIL import Image
-import numpy as np
-#import tensorflow as tf
-import tensorflow.compat.v1 as tf
-from tensorflow.python.lib.io import file_io
-import sys
-sys.path.insert(0, 'tpu/models/official')
-sys.path.insert(0, 'tpu/models/official/mask_rcnn')
-import coco_metric
-from mask_rcnn.object_detection import visualization_utils
-import gcsfs
-import shutil
-
-gcs_path = 'gs://cloud-tpu-checkpoints/mask-rcnn/1555659850'
-local_path = '/tmp/mask-rcnn'
-fs = gcsfs.GCSFileSystem()
-fs.get(gcs_path, local_path, recursive=True)
-
-session = tf.Session(graph=tf.Graph())
-
-# Ensure TensorFlow handles memory growth properly
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-    try:
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-    except RuntimeError as e:
-        print(e)
-
-# Load the saved model from local path
-loaded_model = tf.saved_model.loader.load(session, ['serve'],local_path)
-
-print("Mask RCNN loaded successfully")
-
-
 ID_MAPPING = {
     1: 'person',
     2: 'bicycle',
@@ -412,6 +384,57 @@ ID_MAPPING = {
 category_index = {k: {'id': k, 'name': ID_MAPPING[k]} for k in ID_MAPPING}
 
 
+import subprocess
+from collections import Counter
+
+
+# Command to clone the repository
+command = ["git", "clone", "https://github.com/tensorflow/tpu/"]
+
+# Execute the command
+result = subprocess.run(command, capture_output=True, text=True)
+
+# Print the output
+print(result.stdout)
+print(result.stderr)
+
+from IPython import display
+from PIL import Image
+import numpy as np
+#import tensorflow as tf
+import tensorflow.compat.v1 as tf
+from tensorflow.python.lib.io import file_io
+import sys
+sys.path.insert(0, 'tpu/models/official')
+sys.path.insert(0, 'tpu/models/official/mask_rcnn')
+import coco_metric
+from mask_rcnn.object_detection import visualization_utils
+import gcsfs
+import shutil
+
+gcs_path = 'gs://cloud-tpu-checkpoints/mask-rcnn/1555659850'
+local_path = '/tmp/mask-rcnn'
+fs = gcsfs.GCSFileSystem()
+fs.get(gcs_path, local_path, recursive=True)
+
+session = tf.Session(graph=tf.Graph())
+
+# Ensure TensorFlow handles memory growth properly
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError as e:
+        print(e)
+
+# Load the saved model from local path
+loaded_model = tf.saved_model.loader.load(session, ['serve'],local_path)
+
+print("Mask RCNN loaded successfully")
+
+
+
 def detect_object_using_mask_rcnn(image_path, visualize=False):
     
     with open(image_path, 'rb') as f:
@@ -432,6 +455,19 @@ def detect_object_using_mask_rcnn(image_path, visualize=False):
     detection_scores = np.squeeze(detection_scores, axis=(0,))[0:num_detections]
     detection_classes = np.squeeze(detection_classes.astype(np.int32), axis=(0,))[0:num_detections]
     instance_masks = np.squeeze(detection_masks, axis=(0,))[0:num_detections]
+    
+    # Apply Non-Maximum Suppression
+    selected_indices = tf.image.non_max_suppression(
+        detection_boxes,
+        detection_scores,
+        max_output_size=num_detections,
+        iou_threshold=0.8
+    )
+    detection_boxes = tf.gather(detection_boxes, selected_indices).numpy()
+    detection_scores = tf.gather(detection_scores, selected_indices).numpy()
+    detection_classes = tf.gather(detection_classes, selected_indices).numpy()
+    instance_masks = tf.gather(instance_masks, selected_indices).numpy()
+    
     ymin, xmin, ymax, xmax = np.split(detection_boxes, 4, axis=-1)
     processed_boxes = np.concatenate([xmin, ymin, xmax - xmin, ymax - ymin], axis=-1)
     segmentations = coco_metric.generate_segmentation_from_masks(instance_masks, processed_boxes, height, width)
@@ -454,11 +490,12 @@ def detect_object_using_mask_rcnn(image_path, visualize=False):
         Image.fromarray(image_with_detections.astype(np.uint8)).save(output_image_path)
         display.display(display.Image(output_image_path, width=1024))
 
-    return {"num_detections": num_detections,
+    return {"num_detections": len(selected_indices),
             "detection_boxes": detection_boxes,
             "detection_scores": detection_scores,
             "detection_classes": detection_classes,
             "detection_time": detection_time}
+
 
 
 
