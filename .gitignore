@@ -4,3 +4,6 @@ ModelBenchmarking/yolo11n.pt
 ModelBenchmarking/yolo11x.pt
 
 /ModelBenchmarking/tpu
+ModelBenchmarking/TrafficImages.zip
+ModelBenchmarking/TrafficImages/All/1703_2020-05-06T06-59-30+08-00.jpg
+/ModelBenchmarking/TrafficImages/All
